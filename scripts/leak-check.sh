@@ -15,7 +15,13 @@
 # Exit 0 = clean, 1 = findings. Findings print as path:line:pattern.
 set -uo pipefail
 
-cd "$(dirname "$0")/.." || exit 2
+# Work in the repository the CALLER is in, not the one this script lives in.
+# Measured 2026-09-21: `cd $(dirname $0)/..` sent every scan to the main
+# checkout, so running the gate from a worktree silently measured a different
+# tree and reported on the wrong branch. That is a false clean in the one tool
+# that must not have one, and it is invisible: the output looks normal.
+TOP="$(git rev-parse --show-toplevel 2>/dev/null)" || TOP=""
+cd "${TOP:-$(dirname "$0")/..}" || exit 2
 
 mode=${1:-staged}
 tip=${2:-HEAD}
@@ -47,16 +53,27 @@ srcof() { if [ -n "$scandir" ] && [ -f "$scandir/$1" ]; then echo "$scandir/$1";
 
 # Patterns are deliberately about THIS install's operational surface, not generic
 # "password" words: a generic word list drowns real findings in false positives.
-#   1-4  private addressing and host names that map our network
-#   5-7  identities that tie the code to a person or a chat
-#   8-10 material that is a credential by shape, not by name
+#   1-5   private addressing and host names that map our network
+#   6-8   identities that tie the code to a person or a chat
+#   9-12  CLIENT material: engagement names, their hosts, their devices. This
+#         block is the one the operator asked for by name on 2026-09-21 ("csak
+#         tenyleg ne legyen ugyfel- es sajat adat benn"), and it is the block a
+#         generic secret scanner does NOT have, because a client's name is not a
+#         secret by shape -- only by context.
+#   13-16 material that is a credential by shape, not by name
 patterns=(
   '10\.10\.(99|10[0-4])\.[0-9]+'
+  '10\.10\.1\.[0-9]+'
   '94\.130\.136\.[0-9]+'
   '178\.48\.191\.[0-9]+'
   '(svc|office|mail|nas|gitea)\.trust4sec\.hu'
   '665871484'
   'kucseracs'
+  't4s-(hq|cloud)-[a-z0-9-]+'
+  '\b[Oo][Mm][Ss][Zz]\b'
+  'mentok\.hu'
+  '\b[Vv]-?[Ee][Dd][Ii][Tt][Hh]\b'
+  '[A-Za-z]+_Access_[0-9]+'
   'AgAAA[A-Za-z0-9_-]{20,}'
   '[0-9]{8,10}:AA[A-Za-z0-9_-]{30,}'
   'sk-ant-[A-Za-z0-9_-]{20,}'

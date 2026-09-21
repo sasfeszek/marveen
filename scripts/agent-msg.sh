@@ -17,7 +17,7 @@
 #   MARVEEN_API_BASE   full base URL, e.g. https://marveen.example.com (overrides host+port)
 #   MARVEEN_WEB_PORT   port for the default localhost base (default 3420)
 #   MARVEEN_TOKEN_FILE bearer token file (default <repo>/store/.dashboard-token)
-# MEASURED 2026-09-13: a remote agent (omsz) runs this helper OUTSIDE this repo, where localhost:3420
+# MEASURED 2026-09-13: a remote agent runs this helper OUTSIDE this repo, where localhost:3420
 # does not exist -- it had to fall back to raw curl, i.e. exactly the unchecked pattern this file was
 # written to eliminate. A hardcoded base URL silently un-installs the helper for everyone not on this
 # VM, so the base is env-overridable and the two endpoints stay ONE script.

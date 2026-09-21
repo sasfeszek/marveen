@@ -78,7 +78,7 @@ def _agent_id(cwd):
 
 # --- Local fallback -------------------------------------------------------
 #
-# MEASURED 2026-09-14 on the omsz box: this hook was ALREADY LOADED in the
+# MEASURED 2026-09-14 on a remote agent box: this hook was ALREADY LOADED in the
 # running session, so editing settings.json to point at a second, local hook
 # changed nothing -- a loaded hook command is not re-read. The old body then
 # called a dashboard that does not exist there, got nothing, and exited
