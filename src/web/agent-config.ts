@@ -172,6 +172,37 @@ export function readAgentSecurityProfile(name: string): string {
   return 'default'
 }
 
+// Opt-in PULL delivery: the agent runs on its OWN machine and fetches its
+// messages over the HTTP API with a scoped token, so this install never sees a
+// tmux session for it. Every tmux-shaped gate in the message router ("session
+// absent", "session busy", "session stuck") is a statement about a KEYBOARD
+// this install does not own, and the abandon gate is the destructive one: it
+// flips the row to `failed`, which REMOVES it from the `status=pending` inbox
+// the agent polls. Measured 2026-09-20 on this install: messages 293, 294,
+// 300, 307 and 308 to a remote pull agent were all failed this way after the
+// 60-minute window and he could not see them at all -- the owner had to nudge
+// him over a chat channel each time. For a pull agent the row simply stays
+// pending until HE claims it.
+export function readAgentPullDelivery(name: string): boolean {
+  const configPath = join(agentDir(name), 'agent-config.json')
+  try {
+    const config = JSON.parse(readFileOr(configPath, '{}'))
+    return config.pullDelivery === true
+  } catch { /* fall through */ }
+  return false
+}
+
+// Persist the opt-in pullDelivery flag. `false` removes the key so the config
+// file stays minimal and the default-OFF semantics remain explicit.
+export function writeAgentPullDelivery(name: string, enabled: boolean): void {
+  const configPath = join(agentDir(name), 'agent-config.json')
+  let config: Record<string, unknown> = {}
+  try { config = JSON.parse(readFileOr(configPath, '{}')) } catch {}
+  if (enabled) config.pullDelivery = true
+  else delete config.pullDelivery
+  atomicWriteFileSync(configPath, JSON.stringify(config, null, 2))
+}
+
 // Pure-logic resolver for the optional per-agent claudeConfigDir field.
 // Takes the raw agent-config.json text (or `{}` when no file exists) plus an
 // explicit home-dir, and returns the absolute path to use as

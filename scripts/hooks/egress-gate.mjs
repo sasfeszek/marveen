@@ -343,10 +343,19 @@ if (isInvokedDirectly()) {
     deny(BLOCK_MESSAGE)
   }
   // Audited, not silent: the quarantine tier is the one grant a main agent
-  // cannot obtain, so every use of it leaves a line next to the denials. The
-  // other tiers are the ordinary allowlist and stay quiet.
+  // cannot obtain, so every use of it leaves a line next to the denials.
   if (decision.tier === 'quarantine') {
     logLine('ALLOWED_QUARANTINE', url, 'reason="quarantine-reader tier"', '', agentType)
+  }
+  // The OPERATOR-GRANTED direct tiers are logged too (2026-09-08). These are
+  // the calls where the page text lands straight in the main agent's context,
+  // so they carry the higher prompt-injection risk of the two, and they are
+  // exactly the grants the operator approves one by one -- an approval with no
+  // record of its use cannot be reviewed later. The built-in tier (localhost,
+  // the agent's own dashboard) stays quiet on purpose: it is not a grant, it
+  // is the machine talking to itself, and logging it would bury the rest.
+  if (decision.tier === 'runtime-domain' || decision.tier === 'runtime-prefix') {
+    logLine('ALLOWED_DIRECT', url, `reason="operator allowlist (${decision.tier})"`, '', agentType)
   }
   allow()
 }

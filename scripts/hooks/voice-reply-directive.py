@@ -76,6 +76,50 @@ def _agent_id(cwd):
     return None
 
 
+# --- Local fallback -------------------------------------------------------
+#
+# MEASURED 2026-09-14 on the omsz box: this hook was ALREADY LOADED in the
+# running session, so editing settings.json to point at a second, local hook
+# changed nothing -- a loaded hook command is not re-read. The old body then
+# called a dashboard that does not exist there, got nothing, and exited
+# silently. From the outside that is indistinguishable from "no voice message".
+#
+# The fix is NOT a second hook file. Two copies of one rule is the failure this
+# very situation is made of: the machine-specific shim would be overwritten the
+# next time the fleet ships this file. ONE file that handles both installations
+# is the cure -- dashboard when there is one, local stt.sh when there is not.
+
+STT_LOCAL = os.environ.get(
+    "VOICE_STT_PATH", os.path.expanduser("~/.local/share/marveen-voice/stt.sh"))
+STT_STATE_DIR = os.environ.get(
+    "VOICE_STATE_DIR", os.path.expanduser("~/.claude/channels/telegram"))
+DEBUG = os.environ.get("VOICE_STT_DEBUG") == "1"
+
+
+def _dbg(msg):
+    if DEBUG:
+        sys.stderr.write("voice-reply-directive: %s\n" % msg)
+
+
+def _local_transcript(file_id):
+    """Transcribe here, with the caller's OWN bot token (stt.sh reads it from the
+    state dir). Never raises: a broken STT must not block a prompt."""
+    import subprocess
+    try:
+        r = subprocess.run([STT_LOCAL, file_id, STT_STATE_DIR],
+                           capture_output=True, text=True, timeout=75)
+    except Exception as e:
+        _dbg("local stt.sh could not run: %s" % e)
+        return None
+    if r.returncode != 0:
+        _dbg("local stt.sh exit=%s stderr=%s" % (r.returncode, (r.stderr or "").strip()[:300]))
+        return None
+    out = (r.stdout or "").strip()
+    if not out:
+        _dbg("local stt.sh returned an empty transcript")
+    return out or None
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -118,15 +162,29 @@ def main():
         if kind:
             url += "&kind=" + urllib.parse.quote(kind, safe="")
 
+    data = {}
     try:
         req = urllib.request.Request(url)
         req.add_header("Authorization", "Bearer " + token)
         with urllib.request.urlopen(req, timeout=55) as r:
             data = json.load(r)
-    except Exception:
-        sys.exit(0)  # dashboard unavailable -- fail-safe, no injection
+    except Exception as e:
+        # No dashboard here. That is a legitimate installation, not a failure:
+        # an agent on somebody else's network runs the channel and the voice
+        # tools locally and talks to the fleet only over HTTPS.
+        _dbg("dashboard unavailable (%s) -- falling back to the local STT" % e)
 
     transcript = data.get("transcript")
+    if not transcript:
+        # Say WHY there is no fallback, not just that there was none: a debug mode
+        # that announces "falling back" and then silently does nothing is the same
+        # unreadable silence it was meant to cure.
+        if not file_id or kind not in ("voice", "audio"):
+            _dbg("no local fallback: not a voice message (kind=%s)" % kind)
+        elif not os.access(STT_LOCAL, os.X_OK):
+            _dbg("no local fallback: no executable stt.sh at %s" % STT_LOCAL)
+        else:
+            transcript = _local_transcript(file_id)
     if transcript:
         sys.stdout.write("\n[Hang átirat]: " + transcript + "\n")
         sys.stdout.flush()

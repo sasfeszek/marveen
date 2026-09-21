@@ -1087,6 +1087,24 @@ export function initDatabase(dbPathOverride?: string): void {
   // line in the same step. Null for keys minted outside the pairing flow.
   try { db.exec(`ALTER TABLE device_keys ADD COLUMN install_id TEXT`) } catch { /* column already exists */ }
 
+  // Per-agent scoped tokens (TOKENSZUKITES909). A credential bound to ONE
+  // agent id and ONE named endpoint scope, so a remote agent on someone else's
+  // network can reach the queue and the board without holding the all-powerful
+  // dashboard token. Only sha256(token) is stored; see web/auth-agent-tokens.ts.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agent_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token_hash TEXT NOT NULL UNIQUE,
+      agent_id TEXT NOT NULL,
+      label TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      last_used_at INTEGER,
+      expires_at INTEGER
+    )
+  `)
+  db.exec('CREATE INDEX IF NOT EXISTS idx_agent_tokens_agent ON agent_tokens(agent_id)')
+
   // --- OTel Distributed Tracing (card def5a189) ---
   // SQLite-native span store. No external OTel SDK: spans are written via
   // /api/spans and the message-router middleware injects trace context into
@@ -2547,6 +2565,20 @@ export function getPendingMessages(toAgent?: string): AgentMessage[] {
 // UPDATE would flip such a row failed->delivered after the fact. If the row
 // is no longer pending, this returns false and the caller must not record a
 // result either.
+// Last moment a PULL-delivery agent proved it is alive on the API, in epoch
+// seconds (null = never). A pull agent has no session this install can watch,
+// so "is anyone serving this queue?" has to be answered from its own API
+// traffic instead of from a pane. The weakest honest evidence is a row it
+// WROTE: sending a message requires its scoped token, so a from_agent row is
+// proof of a live, authenticated client. It is deliberately not proof that it
+// READ anything -- that is why the router only warns on staleness and never
+// closes the row.
+export function lastMessageFromAgentAt(agent: string): number | null {
+  const row = db.prepare('SELECT MAX(created_at) AS ts FROM agent_messages WHERE from_agent = ?')
+    .get(agent) as { ts: number | null } | undefined
+  return row?.ts ?? null
+}
+
 export function markMessageDelivered(id: number): boolean {
   const now = Math.floor(Date.now() / 1000)
   return db.prepare("UPDATE agent_messages SET status = 'delivered', delivered_at = ? WHERE id = ? AND status = 'pending'").run(now, id).changes > 0

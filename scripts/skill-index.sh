@@ -65,7 +65,13 @@ index_skills_dir() {
     fi
 
     local desc
-    desc=$(grep -m1 "^description:" "$skill_md" 2>/dev/null | sed 's/^description: *//' | tr -d '"' | tr -d "'" | cut -c1-120)
+    # NOTE: truncate by CHARACTER, not byte. `cut -c` is byte-based in GNU coreutils,
+    # so it sliced accented descriptions mid-UTF-8-sequence and left a lone leading
+    # byte behind. That made the whole index invalid UTF-8, which in turn made plain
+    # `grep` treat it as binary and silently return nothing -- so the skill lookup
+    # that this index exists for always came back empty. (Measured 2026-09-08.)
+    desc=$(grep -m1 "^description:" "$skill_md" 2>/dev/null | sed 's/^description: *//' | tr -d '"' | tr -d "'" \
+      | python3 -c 'import sys; sys.stdout.write(sys.stdin.buffer.read().decode("utf-8","replace").strip()[:120])')
     if [ -z "$desc" ]; then
       desc="(nincs leírás)"
     fi
