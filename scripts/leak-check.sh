@@ -87,7 +87,10 @@ while IFS= read -r f; do
     scripts/leak-check.sh) continue ;;   # this file names the patterns by design
   esac
   for p in "${patterns[@]}"; do
-    if out=$(grep -nEI "$p" -- "$src" 2>/dev/null); then
+    # -e is not decoration: a pattern that starts with "-" (the PRIVATE KEY
+    # header) is otherwise parsed as options. In the file loop stderr was
+    # discarded, so that pattern was never actually applied and nothing said so.
+    if out=$(grep -nEI -e "$p" -- "$src" 2>/dev/null); then
       while IFS= read -r line; do
         echo "LEAK $f:${line%%:*} :: $p"
         findings=$((findings + 1))
@@ -95,6 +98,23 @@ while IFS= read -r f; do
     fi
   done
 done < <(collect "$@")
+
+# COMMIT MESSAGES are published too, and they are the part a file scanner never
+# sees. Measured 2026-09-21: two commit bodies named a client agent and its host
+# while every file in the same range was clean -- the gate said "clean" and was
+# right about the files and wrong about the push.
+if [ "$mode" != "staged" ] && [ "$mode" != "--files" ]; then
+  while IFS= read -r sha; do
+    [ -n "$sha" ] || continue
+    msg=$(git log -1 --format='%B' "$sha")
+    for p in "${patterns[@]}"; do
+      if echo "$msg" | grep -qE -e "$p"; then
+        echo "LEAK commit ${sha:0:9} (message) :: $p"
+        findings=$((findings + 1))
+      fi
+    done
+  done < <(git rev-list "$mode".."$tip" 2>/dev/null)
+fi
 
 # Binary documents (network diagrams, screenshots) cannot be grepped, so they are
 # judged by path. An HQ topology picture leaks more than any string would.
