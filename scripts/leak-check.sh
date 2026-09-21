@@ -5,9 +5,12 @@
 # private=false). A fork of a public repository cannot be made private on GitHub, so
 # "the branch is ours" is never a reason to relax this. Run before every push.
 #
-#   bash scripts/leak-check.sh              # scan what is staged (pre-commit)
-#   bash scripts/leak-check.sh <ref>        # scan <ref>..HEAD (pre-push)
-#   bash scripts/leak-check.sh --files a b  # scan named files
+#   bash scripts/leak-check.sh                 # scan what is staged (pre-commit)
+#   bash scripts/leak-check.sh <base> [<tip>]  # scan <base>..<tip>, tip defaults to HEAD
+#   bash scripts/leak-check.sh --files a b     # scan named files
+#
+# <tip> is not cosmetic: a push can send a branch that is NOT checked out, and
+# scanning HEAD in that case measures the wrong tree while reporting "clean".
 #
 # Exit 0 = clean, 1 = findings. Findings print as path:line:pattern.
 set -uo pipefail
@@ -15,15 +18,32 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 
 mode=${1:-staged}
+tip=${2:-HEAD}
 findings=0
+scandir=""   # non-empty when files must be read out of a ref, not the worktree
 
 collect() {
   case "$mode" in
     --files) shift; printf '%s\n' "$@" ;;
     staged)  git diff --cached --name-only --diff-filter=ACM ;;
-    *)       git diff --name-only --diff-filter=ACM "$mode"..HEAD ;;
+    *)       git diff --name-only --diff-filter=ACM "$mode".."$tip" ;;
   esac
 }
+
+# For a range, read the files from <tip> rather than the worktree: the branch
+# being pushed may not be the one checked out.
+if [ "$mode" != "staged" ] && [ "$mode" != "--files" ]; then
+  scandir=$(mktemp -d)
+  trap 'rm -rf "$scandir"' EXIT
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    mkdir -p "$scandir/$(dirname "$f")"
+    git show "$tip:$f" > "$scandir/$f" 2>/dev/null || rm -f "$scandir/$f"
+  done < <(collect "$@")
+fi
+
+# Resolve a listed path to the copy that should actually be read.
+srcof() { if [ -n "$scandir" ] && [ -f "$scandir/$1" ]; then echo "$scandir/$1"; else echo "$1"; fi; }
 
 # Patterns are deliberately about THIS install's operational surface, not generic
 # "password" words: a generic word list drowns real findings in false positives.
@@ -44,12 +64,13 @@ patterns=(
 )
 
 while IFS= read -r f; do
-  [ -f "$f" ] || continue
+  src=$(srcof "$f")
+  [ -f "$src" ] || continue
   case "$f" in
     scripts/leak-check.sh) continue ;;   # this file names the patterns by design
   esac
   for p in "${patterns[@]}"; do
-    if out=$(grep -nEI "$p" -- "$f" 2>/dev/null); then
+    if out=$(grep -nEI "$p" -- "$src" 2>/dev/null); then
       while IFS= read -r line; do
         echo "LEAK $f:${line%%:*} :: $p"
         findings=$((findings + 1))
